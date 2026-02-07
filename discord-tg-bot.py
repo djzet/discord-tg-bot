@@ -367,6 +367,65 @@ class SubscribeView(View):
     
     @discord.ui.button(label="🔔 Подписаться", style=discord.ButtonStyle.green, custom_id="subscribe_btn")
     async def subscribe(self, interaction: discord.Interaction, button: Button):
+        try:
+            await self._update_subscription(interaction, True)
+        except discord.errors.NotFound:
+            logger.warning("Unknown interaction - кнопка устарела")
+        except Exception as e:
+            logger.error(f"Subscribe error: {e}")
+    
+    @discord.ui.button(label="🔕 Отписаться", style=discord.ButtonStyle.red, custom_id="unsubscribe_btn")
+    async def unsubscribe(self, interaction: discord.Interaction, button: Button):
+        try:
+            await self._update_subscription(interaction, False)
+        except discord.errors.NotFound:
+            logger.warning("Unknown interaction - кнопка устарела")
+        except Exception as e:
+            logger.error(f"Unsubscribe error: {e}")
+    
+    async def _update_subscription(self, interaction, subscribe):
+        try:
+            await interaction.response.defer(ephemeral=True)
+        except discord.errors.NotFound:
+            return  # Игнорируем устаревшие взаимодействия
+        
+        user = interaction.user
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        
+        was_subscribed = user.id in self.bot.storage.subscribers
+        action_name = "subscribed" if subscribe else "unsubscribed"
+        
+        if was_subscribed == subscribe:
+            status_key = "already_subscribed" if subscribe else "already_unsubscribed"
+            status_msg = self.bot.messages.get("discord", "subscription", status_key, "msg")
+            await interaction.followup.send(
+                MessageFormatter.format_for_discord(status_msg), 
+                ephemeral=True
+            )
+            logger.info(f"👤 {user.name} повторная попытка ({'🔔' if subscribe else '🔕'})")
+            return
+        
+        success = await self.bot.storage.toggle_subscription(user.id, subscribe)
+        
+        msg = self.bot.messages.get("discord", "subscription", action_name)
+        await interaction.followup.send(MessageFormatter.format_for_discord(msg), ephemeral=True)
+        
+        template = self.bot.messages.get("telegram", "subscription", action_name, "content")
+        text = template.format(
+            user_name=user.display_name or user.name,
+            user_id=user.id,
+            timestamp=timestamp,
+            total_subs=len(self.bot.storage.subscribers)
+        )
+        await self.bot.telegram.broadcast(text)
+        
+        logger.info(f"👤 {user.name} ({'🔔' if subscribe else '🔕'}) - {len(self.bot.storage.subscribers)} всего")
+    def __init__(self, bot):
+        super().__init__(timeout=None)
+        self.bot = bot
+    
+    @discord.ui.button(label="🔔 Подписаться", style=discord.ButtonStyle.green, custom_id="subscribe_btn")
+    async def subscribe(self, interaction: discord.Interaction, button: Button):
         await self._update_subscription(interaction, True)
     
     @discord.ui.button(label="🔕 Отписаться", style=discord.ButtonStyle.red, custom_id="unsubscribe_btn")
@@ -464,74 +523,91 @@ async def keep_alive_task():
             logger.error(f"Keep-alive error: {e}")
             await asyncio.sleep(60)
 
-
 async def main():
     config = validate_tokens()
-    global storage, notifier_obj
+    global storage, notifier_obj, api_obj  # ✅ Все глобальные переменные
     
-    storage = DataStorage() 
+    # ✅ Создание объектов в правильном порядке
+    storage = DataStorage()
     messages = MessageManager()
     
     api = TelegramAPI(config.telegram_token)
+    api_obj = api  # ✅ Глобальная ссылка для закрытия
     notifier = TelegramNotifier(api, storage, messages)
-    notifier_obj = notifier
+    notifier_obj = notifier  # ✅ Глобальная ссылка для keep-alive
     bot = DiscordBot(config, storage, messages, notifier)
     notifier.bot = bot
     
+    # ✅ Инициализация
     await storage.load_all()
     await setup_commands(bot)
     
     try:
-        # Startup уведомление
+        # ✅ Startup уведомление
         startup_msg = messages.get("telegram", "system", "bot_started")
         await notifier.broadcast(MessageFormatter.format_for_telegram(
             startup_msg, start_time=datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         ))
         
-        # Запуск задач
+        logger.info("🚀 Все системы запущены! Keep-alive активен.")
+        
+        # ✅ Запуск всех задач
         bot_task = asyncio.create_task(bot.start(config.discord_token))
         polling_task = asyncio.create_task(telegram_polling(notifier))
         keep_alive_task_ = asyncio.create_task(keep_alive_task())
         
+        # ✅ Ждем завершения любой задачи
         done, pending = await asyncio.wait(
             [bot_task, polling_task, keep_alive_task_], 
             return_when=asyncio.FIRST_COMPLETED
         )
         
+        # ✅ Graceful shutdown остальных задач
         for task in pending:
             task.cancel()
             try:
                 await asyncio.wait_for(task, timeout=5.0)
-            except:
+            except asyncio.TimeoutError:
+                logger.warning("Задача не завершилась вовремя")
+            except Exception:
                 pass
                 
     except KeyboardInterrupt:
-        logger.info("🛑 Ctrl+C получен")
+        logger.info("🛑 Ctrl+C получен - graceful shutdown")
     except Exception as e:
-        logger.error(f"❌ Ошибка: {e}")
+        logger.error(f"❌ Критическая ошибка main(): {e}")
     finally:
+        # ✅ Shutdown уведомление
         logger.info("📢 Отправка уведомления об остановке...")
         try:
-            shutdown_msg = messages.get("telegram", "system", "bot_stopped")
-            await notifier_obj.broadcast(MessageFormatter.format_for_telegram(shutdown_msg))
-        except:
-            pass
+            if notifier_obj:
+                shutdown_msg = messages.get("telegram", "system", "bot_stopped")
+                await notifier_obj.broadcast(MessageFormatter.format_for_telegram(shutdown_msg))
+        except Exception as e:
+            logger.error(f"Shutdown уведомление ошибка: {e}")
+        
+        # ✅ Закрытие сессий
+        try:
+            if api_obj and api_obj.session and not api_obj.session.closed:
+                await api_obj.session.close()
+                logger.info("✅ Telegram сессия закрыта")
+        except Exception as e:
+            logger.error(f"Закрытие Telegram сессии: {e}")
         
         try:
-            if api.session and not api.session.closed:
-                await api.session.close()
-        except:
-            pass
-        try:
-            if not bot.is_closed():
+            if bot and not bot.is_closed():
                 await bot.close()
-        except:
-            pass
-        logger.info("✅ Бот остановлен")
-
+                logger.info("✅ Discord бот закрыт")
+        except Exception as e:
+            logger.error(f"Закрытие Discord бота: {e}")
+        
+        logger.info("✅ Бот полностью остановлен")
 
 if __name__ == "__main__":
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
         print("\n👋 До свидания!")
+    except Exception as e:
+        logger.error(f"Fatal error: {e}")
+        sys.exit(1)
