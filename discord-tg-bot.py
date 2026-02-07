@@ -447,6 +447,20 @@ async def telegram_polling(notifier):
             logger.error(f"Polling error: {e}")
             await asyncio.sleep(1)
 
+async def keep_alive_task():
+    """Keep-Alive: лог каждую минуту"""
+    global storage
+    while True:
+        try:
+            uptime = str(timedelta(seconds=int(time.time() - storage.bot_start_time)))
+            logger.info(f"👾 KEEP-ALIVE | Подписчиков: {len(storage.subscribers)} | TG: {len(storage.chat_ids)} | Uptime: {uptime}")
+            await asyncio.sleep(60)
+        except asyncio.CancelledError:
+            break
+        except Exception as e:
+            logger.error(f"Keep-alive error: {e}")
+            await asyncio.sleep(60)
+
 
 async def main():
     config = validate_tokens()
@@ -456,8 +470,6 @@ async def main():
     api = TelegramAPI(config.telegram_token)
     notifier = TelegramNotifier(api, storage, messages)
     bot = DiscordBot(config, storage, messages, notifier)
-    
-    # ✅ Связываем боты
     notifier.bot = bot
     
     await storage.load_all()
@@ -467,24 +479,26 @@ async def main():
         # Startup уведомление
         startup_msg = messages.get("telegram", "system", "bot_started")
         await notifier.broadcast(MessageFormatter.format_for_telegram(
-            startup_msg, 
-            start_time=datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            startup_msg, start_time=datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         ))
         
-        # Discord + Telegram polling
+        # Запуск всех задач
         bot_task = asyncio.create_task(bot.start(config.discord_token))
         polling_task = asyncio.create_task(telegram_polling(notifier))
+        keep_alive_task_ = asyncio.create_task(keep_alive_task())  # ✅ Keep-Alive
         
+        # Ждем завершения любой задачи
         done, pending = await asyncio.wait(
-            [bot_task, polling_task], 
+            [bot_task, polling_task, keep_alive_task_], 
             return_when=asyncio.FIRST_COMPLETED
         )
         
+        # Отмена остальных
         for task in pending:
             task.cancel()
             try:
                 await asyncio.wait_for(task, timeout=5.0)
-            except (asyncio.CancelledError, asyncio.TimeoutError):
+            except:
                 pass
                 
     except KeyboardInterrupt:
@@ -492,16 +506,17 @@ async def main():
     except Exception as e:
         logger.error(f"❌ Ошибка: {e}")
     finally:
+        # Shutdown уведомление
         logger.info("📢 Отправка уведомления об остановке...")
         try:
             shutdown_msg = messages.get("telegram", "system", "bot_stopped")
             await notifier.broadcast(MessageFormatter.format_for_telegram(shutdown_msg))
-        except Exception as e:
-            logger.error(f"Ошибка уведомления остановки: {e}")
+        except:
+            pass
         
-        logger.info("🔄 Закрытие ресурсов...")
+        # Закрытие
         try:
-            if hasattr(api, 'session') and api.session and not api.session.closed:
+            if api.session and not api.session.closed:
                 await api.session.close()
         except:
             pass
@@ -510,7 +525,8 @@ async def main():
                 await bot.close()
         except:
             pass
-        logger.info("✅ Бот полностью остановлен")
+        logger.info("✅ Бот остановлен")
+
 
 
 if __name__ == "__main__":
