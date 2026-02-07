@@ -370,6 +370,70 @@ class SubscribeView(View):
         try:
             await self._update_subscription(interaction, True)
         except discord.errors.NotFound:
+            # ✅ Игнорируем устаревшие кнопки (15+ мин)
+            pass
+        except Exception as e:
+            logger.error(f"Subscribe error: {e}")
+    
+    @discord.ui.button(label="🔕 Отписаться", style=discord.ButtonStyle.red, custom_id="unsubscribe_btn")
+    async def unsubscribe(self, interaction: discord.Interaction, button: Button):
+        try:
+            await self._update_subscription(interaction, False)
+        except discord.errors.NotFound:
+            # ✅ Игнорируем устаревшие кнопки
+            pass
+        except Exception as e:
+            logger.error(f"Unsubscribe error: {e}")
+    
+    async def _update_subscription(self, interaction, subscribe):
+        try:
+            # ✅ Быстрый defer (3 сек лимит Discord)
+            await interaction.response.defer(ephemeral=True, thinking=False)
+        except discord.errors.NotFound:
+            logger.debug("Interaction expired - игнорируем")
+            return
+        
+        user = interaction.user
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        was_subscribed = user.id in self.bot.storage.subscribers
+        action_name = "subscribed" if subscribe else "unsubscribed"
+        
+        # ✅ Проверка состояния
+        if was_subscribed == subscribe:
+            status_key = "already_subscribed" if subscribe else "already_unsubscribed"
+            status_msg = self.bot.messages.get("discord", "subscription", status_key, f"Уже {'подписан' if subscribe else 'отписан'}")
+            await interaction.followup.send(status_msg, ephemeral=True)
+            logger.info(f"👤 {user.name} повторная попытка ({'🔔' if subscribe else '🔕'})")
+            return
+        
+        # ✅ Изменяем подписку
+        success = await self.bot.storage.toggle_subscription(user.id, subscribe)
+        
+        # ✅ Discord ответ
+        msg = self.bot.messages.get("discord", "subscription", action_name, 
+                                   f"✅ Вы {'подписались' if subscribe else 'отписались'}!")
+        await interaction.followup.send(msg, ephemeral=True)
+        
+        # ✅ TG уведомление
+        template = self.bot.messages.get("telegram", "subscription", action_name, "content")
+        text = template.format(
+            user_name=user.display_name or user.name,
+            user_id=user.id,
+            timestamp=timestamp,
+            total_subs=len(self.bot.storage.subscribers)
+        )
+        await self.bot.telegram.broadcast(text)
+        
+        logger.info(f"👤 {user.name} ({'🔔' if subscribe else '🔕'}) - {len(self.bot.storage.subscribers)} всего")
+    def __init__(self, bot):
+        super().__init__(timeout=None)
+        self.bot = bot
+    
+    @discord.ui.button(label="🔔 Подписаться", style=discord.ButtonStyle.green, custom_id="subscribe_btn")
+    async def subscribe(self, interaction: discord.Interaction, button: Button):
+        try:
+            await self._update_subscription(interaction, True)
+        except discord.errors.NotFound:
             logger.warning("Unknown interaction - кнопка устарела")
         except Exception as e:
             logger.error(f"Subscribe error: {e}")
