@@ -1,3 +1,7 @@
 .env
-config.json
 chat_ids.json
+subscribers.json
+chat_ids.json.bak
+subscribers.json.bak
+bot.log
+__pycache__

@@ -1,0 +1,46 @@
+{
+  "version": "2.2.0",
+  "last_updated": "2026-02-07",
+  "discord": {
+    "notifier": {
+      "stats": "✅ Подписчиков: `{subs_count}`\n📱 TG чатов: `{chats_count}`",
+      "telegram_info": "\n1. Откройте [бота](https://t.me/discord_tg_notifier_bot)\n2. Нажмите `/start`\n3. Chat_id добавится автоматически"
+    },
+    "subscription": {
+      "subscribed": "✅ Подписка активна 🔔",
+      "unsubscribed": "❌ Подписка отменена 🔕",
+      "already_subscribed": { "msg": "✅ Вы уже подписаны 🔔" },
+      "already_unsubscribed": { "msg": "🔕 Вы уже отписаны" }
+    }
+  },
+  "telegram": {
+    "system": {
+      "bot_started": "🚀 Discord бот онлайн\n⏰ {start_time}",
+      "bot_stopped": "🛑 Discord бот оффлайн"
+    },
+    "subscription": {
+      "subscribed": { "content": "🔔 {user_name} подписался\n🆔 {user_id}\n⏰ {timestamp}\n👥 {total_subs} всего" },
+      "unsubscribed": { "content": "🔕 {user_name} отписался\n🆔 {user_id}\n⏰ {timestamp}\n👥 {total_subs} всего" }
+    },
+    "voice_events": {
+      "joined": "🟢 {user_name} вошел в {channel_name}\n👤 {user_id}\n⏰ {time}",
+      "left": "🔴 {user_name} покинул {channel_name}\n👤 {user_id}\n⏰ {time}",
+      "moved": "🔄 {user_name} перешел в {channel_name}\n👤 {user_id}\n⏰ {time}"
+    },
+    "commands": {
+      "start": {
+        "welcome": "✅ Регистрация прошла!\n📢 Получите уведомления о голосовых каналах",
+        "already_registered": "ℹ️ Уже в списке!\n📢 Готовы к уведомлениям"
+      },
+      "help": { "title": "❓ *Команды:*\n`/start` - регистрация\n`/status` - статус\n`/help` - справка" },
+      "status": {
+        "loading": "⏳ Формирую статус...",
+        "title": "📊 **СТАТУС**\n\n🤖 Notifications#8826\n⏱️ *Uptime*: `{uptime}`\n👥 `{subs_count}` Discord\n📱 `{chats_count}` TG\n\n🔔 **ПОДПИСЧИКИ:**\n{subscribers_list}\n\n📱 `/status` `/help`"
+      }
+    },
+    "errors": {
+      "invalid_command": "❌ Неизвестная команда\n📖 `/help`",
+      "no_subscribers": "👥 Никто не подписан"
+    }
+  }
+}
